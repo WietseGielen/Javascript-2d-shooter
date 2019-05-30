@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Javascript 2d Shooter</title>
+</head>
+<body>
+    <style>
+        body {
+            overflow: hidden;
+            margin: 0;
+        }
+
+        canvas {
+            background: rgb(0,0,0);
+        }
+
+        #intro {
+            padding: 50vh 0;
+            font-size: 60px;
+            font-family: sans-serif;
+            text-align: center;
+            background: black;
+            color: white;
+        }
+
+        #life {
+            visibility: hidden;
+
+            position: fixed;
+            
+            width: 70px;
+            height: 15px;
+
+            top: 22px;
+            left: 1835px;
+
+            background: grey;
+        }
+
+        #lifeBar {
+            position: fixed;
+
+            top: 22px;
+            left: 1835px;
+
+            width: 0px;
+            height: 15px;
+
+            background: green;
+        }
+    </style>
+
+    <main>
+        <div id="life">
+            <div id="lifeBar"></div>
+        </div>
+        <div id="intro">PRESS ANY BUTTON TO START GAME</div>
+        <canvas id="canvas" width="1920" height="1000"></canvas>
+        <audio id="music" src="music.mp3" loop autoplay></audio>
+    </main>
+
+    <script>
+        var canvas = document.getElementById("canvas");
+        var ctx = canvas.getContext("2d");
+
+        var music = document.getElementById("music");
+
+        var life = document.getElementById("life");
+        var lifeBar = document.getElementById("lifeBar");
+        var lifeBar_width = 70;
+
+        var player_lives = 100;
+        var score = 0;
+        var level = 1;
+
+        var tank_width = 75;
+        var tank_height = 75;
+        var tank_speed = 5; //actually used to increment the Y coords of all the blocks, set at 0.3
+
+        var tank = new Map();
+            tank.set("X", canvas.width / 2);
+            tank.set("Y", canvas.height - 70);
+            tank.set("width", tank_width);
+            tank.set("height", tank_height);
+
+        var plane = new Image();
+            plane.src = 'plane.png';
+            
+
+        var balls = [];
+        var ball_speed = 9;
+        var since_last_fire = performance.now();
+
+        var blocks = [];
+        var tank_block_collision_bool = true;
+
+        var monsters = [];
+        var monster_speed = 6; //speed at which the monsters move along the y axis.
+
+        //This part handles the pressing of keys used to move the tank and fire
+        var right_pressed = false;
+        var left_pressed = false;
+        var up_pressed = false;
+        var down_pressed = false;
+        var space_pressed = false;
+
+        document.addEventListener("keydown", KeyDownFunc, false);
+        document.addEventListener("keyup", KeyUpFunc, false);
+
+        function KeyDownFunc(e) {
+            if (e.keyCode == 39) {
+                right_pressed = true;
+            } else if (e.keyCode == 37) {
+                left_pressed = true;
+            } else if (buttonPressed(gp.buttons[0])) {
+                space_pressed = true;
+            }
+        }
+        
+        function KeyUpFunc(e) {
+            if (e.keyCode == 39) {
+                right_pressed = false;
+            } else if (e.keyCode == 37) {
+                left_pressed = false;
+            } else if (e.keyCode == 32) {
+                space_pressed = false;
+            }
+        }
+        
+
+        //Drawing the Tank
+        function drawTank() {
+            ctx.beginPath();
+            //ctx.rect(tank.get("X"), tank.get("Y"), tank_width, tank_height);
+            //ctx.fillStyle = "red";
+
+            //ctx.rect(tank.get("X") + tank_width / 2 - 5, tank.get("Y") - 15, 10, 15);
+            //ctx.fillStyle = "blue";
+            
+            ctx.drawImage(plane, tank.get("X") - 23, tank.get("Y") - 28);
+
+            //ctx.fill();
+            ctx.closePath();
+        }
+
+        //Drawing the border blocks
+        function drawBorder() {
+            ctx.beginPath();
+            //ctx.rect(0, 0, 80, canvas.height);
+            //ctx.rect(canvas.width - 80, 0, 80, canvas.height);
+            //ctx.fillStyle = "black";
+            //ctx.fill();
+            ctx.closePath();
+        }
+
+        //Initializing a new ball (starting position), adding it to a list
+        function drawNewBall(ball_X, ball_Y) {
+            ctx.beginPath();
+            ctx.arc(ball_X, ball_Y, 5, 0, Math.PI * 2);
+
+            var ball = new Map();
+                ball.set("X", ball_X);
+                ball.set("Y", ball_Y);
+                ball.set("width", 3);
+                ball.set("height", 3);
+                balls.push(ball);
+                since_last_fire = performance.now();
+        }
+
+        //drawing all of the balls of the list
+        function drawBalls() {
+            for (var i = 0; i < balls.length; i++) {
+                ctx.beginPath();
+                ctx.arc(balls[i].get("X"), balls[i].get("Y"), 5, 0, Math.PI * 2);
+                ctx.fillStyle = "red";
+                ctx.fill();
+                ctx.closePath();
+            }
+        }
+
+        //Generates coordinates with 80 < x < (canvas.width - 120) and -260 < y < -60. Returns the coordinates.
+        function generateCoords() {
+            do {
+                var X = Math.random() * (canvas.width - 80) + 80;
+            } while (X + 120 > canvas.width);
+
+            var Y = Math.random() * (-260 - 60) - 60;
+            return [X, Y];
+        }
+
+        //Checks that the distance between TWO blocks is greater than 140 and the difference along the Y-axis is greater than 40
+        function distanceCheck(X1, Y1, X2, Y2) {
+            var distance = Math.sqrt(Math.pow(X1 - X2, 2) + Math.pow(Y1 - Y2, 2));
+            if (distance > 140 && Math.abs(Y1 - Y2) > 40) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        //function that returns TRUE if we need to generate new coords because the blocks are too close, FALSE otherwise
+        function blockDistanceChecker(X, Y) {
+            if (blocks.length == 0) {
+                return false;
+            }
+
+            var check = false;
+            for (i = 0; i < blocks.length; i++) {
+                if (distanceCheck(X, Y, blocks[i].get("X"), blocks[i].get("Y"))) {
+                check = check || false;
+                } else {
+                check = check || true;
+                }
+            }
+
+            if (!check) {
+                return false;
+            } else {
+                return true;
+            }
+        }
+
+        //Creates a new block
+        function drawNewBlock() {
+            do {
+                var coords = generateCoords();
+                var X = coords[0];
+                var Y = coords[1];
+            } while (blockDistanceChecker(X, Y));
+
+            var width = 40;
+            var height = 60;
+
+            var block = new Map();
+                block.set("X", X);
+                block.set("Y", Y);
+                block.set("width", width);
+                block.set("height", height);
+
+            blocks.push(block);
+        }
+
+        var invader = new Image()
+            invader.src = 'invader.png';
+
+        function drawBlocks() {
+            for (var i = 0; i < blocks.length; i++) {
+                ctx.beginPath();
+                //ctx.rect(blocks[i].get("X"), blocks[i].get("Y"), blocks[i].get("width"), blocks[i].get("height"));
+                //ctx.fillStyle = "white";
+                //ctx.fill();
+
+                ctx.drawImage(invader, blocks[i].get("X"), blocks[i].get("Y"))
+
+                ctx.closePath();
+            }
+        }
+
+        //Mover function: moves blocks elements down (y++) along the y axis
+        function moverFunc() {
+            for (var i = 0; i < blocks.length; i++) {
+                blocks[i].set("Y", blocks[i].get("Y") + tank_speed + score);
+                //Drops the block from the blocks array when they're out of view
+                if (blocks[i].get("Y") > canvas.width) {
+                blocks.splice(i, 1);
+                }
+            }
+        }
+
+        //Mover function: moves the balls the balls up (y--) along the y axis //ADDED: Moving the monsters
+        function moveBalls() {
+            //Moving the Balls
+            for (var i = 0; i < balls.length; i++) {
+                balls[i].set("Y", balls[i].get("Y") - ball_speed);
+                //Drops the ball from the balls array when they're out of view
+                if (balls[i].get("Y") < 0) {
+                balls.splice(i, 1);
+                }
+            }
+
+            //Moving the Monsters
+            for (var j = 0; j < monsters.length; j++) {
+                monsters[j].set("Y", monsters[j].get("Y") + monster_speed);
+                //Drops the monsters from the list when they're out of view
+                if (monsters[j].get("Y") > canvas.width) {
+                monsters.splice(j, 1);
+                }
+            }
+        }
+
+        //Block Collision detection function
+        function tank_block_collision() {
+            
+
+            for (i = 0; i < blocks.length; i++) {
+                var conflict_X = false;
+                var conflict_Y = false;
+
+                if (tank.get("X") + tank_width > blocks[i].get("X") && tank.get("X") < blocks[i].get("X") + 40) {
+                conflict_X = conflict_X || true;
+                }
+                if (tank.get("Y") < blocks[i].get("Y") + 60 && tank.get("Y") > blocks[i].get("Y")) {
+                conflict_Y = conflict_Y || true;
+                }
+                if (conflict_X && conflict_Y) {
+                tank_block_collision_bool = false;
+                player_lives -= 5;
+                lifeBar_width -= 3.5;
+                lifeBar.style.width = lifeBar_width + 'px';
+                return;
+                }
+            }
+            tank_block_collision_bool = true;
+        }
+
+        //Generates X and Y coordinates for a new monster
+        function create_monster() {
+            var coords = generateCoords();
+            var X = coords[0];
+            var Y = coords[1];
+
+            var monster = new Map();
+                monster.set("X", X);
+                monster.set("Y", Y);
+                monster.set("width", 25);
+                monster.set("height", 29);
+                monsters.push(monster);
+        }
+
+        var bonus = new Image();
+            bonus.src = 'bonus.png'
+
+        //Draws a monster
+        function draw_monster(X, Y) {
+            var scale = 0.8;
+            var h = 9; //height
+            var a = 5;
+
+            ctx.beginPath();
+            
+            ctx.drawImage(bonus, monsters[i].get("X"), monsters[i].get("Y"))
+
+            ctx.closePath();
+        }
+
+        //Draws all monsters in the monsters list
+        function draw_monsters() {
+            for (i = 0; i < monsters.length; i++) {
+                var X = monsters[i].get("X");
+                var Y = monsters[i].get("Y");
+                draw_monster(X, Y);
+            }
+        }
+
+        //Collision detector: detects a collision along the Y-axis between two objects (Maps) with the following template: ["X", "Y", "width", "height"]
+        function collision_detector(first, second) {
+            var x1 = first.get("X");
+            var y1 = first.get("Y");
+            var width1 = first.get("width");
+            var height1 = first.get("height");
+            var x2 = second.get("X");
+            var y2 = second.get("Y");
+            var width2 = second.get("width");
+            var height2 = second.get("height");
+
+            if (x2 > x1 && x2 < x1 + width1 || x1 > x2 && x1 < x2 + width2) {
+                if (y2 > y1 && y2 < y1 + height1 || y1 > y2 && y1 < y2 + height2) {
+                    return true;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        //detects a collion betweenn balls and monsters
+        function ball_monster_collision() {
+            for (var i = 0; i < monsters.length; i++) {
+                var monster = monsters[i];
+                for (var j = 0; j < balls.length; j++) {
+                    var ball = balls[j];
+                    if (collision_detector(monster, ball)) {
+                        balls.splice(j, 1);
+                        monsters.splice(i, 1);
+                        score += 2;
+                    }
+                }
+            }
+        }
+        /*
+        function ball_block_collission() {
+            for (var i = 0; i < blocks.length; i++) {
+                var block = blocks[i];
+                for (var j = 0; j < balls.length; j++) {
+                    var ball = balls[j];
+                    if (collision_detector(block, ball)) {
+                        balls.splice(j, 1);
+                        blocks.splice(i, 1);
+                    }
+                }
+            }
+        }
+        */
+
+        music.src = "music4.mp3";
+
+        function levels() {
+            //music.src = "music1.mp3"
+            if (score > 10) {
+                level = 2;
+                canvas.style.background = "url('https://i.imgur.com/0IWb7dn.gif')";
+                //music.src = "music2.mp3";
+            }
+            if (score > 20) {
+                level = 3;
+                canvas.style.background = "url('https://i0.wp.com/cdna.artstation.com/p/assets/images/images/009/185/874/original/jeremie-persault-animation-fond-decran2.gif?1517577539?resize=250,250')";
+                //music.src = "music3.mp3";
+            }
+            if (score > 30) {
+                level = 4;
+                canvas.style.background = "url('https://i.pinimg.com/originals/b1/72/8a/b1728a49ec07b79af0796beefe503bb9.gif')";
+                //music.src = "music4.mp3";
+            }
+            if (score > 40) {
+                level = 5;
+            }
+            if (score > 50) {
+                level = 6;
+            }
+        }
+
+
+
+        //Used to display the number of lives remaining and game score
+        function drawInfo() {
+            ctx.font = "bold 15px Gill Sans MT";
+            ctx.fillStyle = "white";
+            //ctx.fillText("Life: " + player_lives + "%", 1835, 22);
+            ctx.fillText("Score: " + score, 13, 22);
+            ctx.fillText("Level: " + level, 13, 40);
+        }
+
+        //Main function, will be used to run the game
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); 
+            drawBorder();
+            drawInfo();
+            drawTank();
+            drawBalls();
+            drawBlocks();
+            draw_monsters();
+            moveBalls();
+            tank_block_collision();
+            ball_monster_collision();
+            //ball_block_collission();
+            moverFunc();
+            levels();
+
+            life.style.visibility = 'visible';
+            lifeBar.style.visibility = 'visible';
+            lifeBar.style.width = lifeBar_width + 'px';
+
+            var gp = navigator.getGamepads()[0];
+
+            let button = gp.buttons[0];
+            let R2 = gp.buttons[7];
+            let up = gp.buttons[13];
+            let down = gp.buttons[12];
+            let left = gp.buttons[14];
+            let right = gp.buttons[15];
+
+            if (button.pressed || R2.pressed) {
+                space_pressed = true;
+            } else {
+                space_pressed = false;
+            }
+
+            let x = gp.axes[0];
+            let y = gp.axes[1];
+
+            if (x < -0.5 || left.pressed) {
+                left_pressed = true;
+                right_pressed = false;
+            } else if (x > 0.5 || right.pressed) {
+                right_pressed = true;
+                left_pressed = false;
+            } else {
+                left_pressed = false;
+                right_pressed = false;
+            }
+
+            if (y > 0.5 || up.pressed) {
+                up_pressed = true;
+                down_pressed = false;
+            } else if (y < -0.5 || down.pressed) {
+                down_pressed = true;
+                up_pressed = false;
+            } else {
+                up_pressed = false;
+                down_pressed = false;
+            }
+
+
+
+
+            if (space_pressed && balls.length < 20 && performance.now() - since_last_fire > 75) {
+                drawNewBall(tank.get("X") + 15, tank.get("Y") - 30);
+            }
+
+            if (up_pressed && tank.get("Y") + tank_height < canvas.height) {
+                tank.set("Y", tank.get("Y") + 10);
+            }
+            if (down_pressed && tank.get("Y") > 0) {
+                tank.set("Y", tank.get("Y") - 10);
+            }
+
+            if (right_pressed && tank.get("X") + tank_width < canvas.width) {
+                tank.set("X", tank.get("X") + 10);
+                plane.src = 'plane-right.png';
+            } else if (left_pressed && tank.get("X") > 0) {
+                tank.set("X", tank.get("X") - 10);
+                plane.src = 'plane-left.png';
+            } else {
+                plane.src = 'plane.png';
+            }
+
+            if (blocks.length < 5) {
+                drawNewBlock();
+            }
+            if (monsters.length < 3 && level < 3) {
+                create_monster();
+            } else if (level == 3) {
+                if (monsters.length < 2) {
+                    create_monster();
+                }
+            } else if (level > 3) {
+                if (monsters.length < 1) {
+                    create_monster();
+                }
+            }
+            /* if (mosters.length < 2 && level > 3 && level < 5) {
+                create_monster();
+            } else if (monster.length < 1 && level >= 5) {
+                create_monster();
+            }*/
+            if (!tank_block_collision_bool && player_lives < 0) {
+                alert("You lost");
+                document.location.reload()
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        var intro = document.getElementById('intro');
+
+        window.addEventListener("gamepadconnected", function() {
+            var gp = navigator.getGamepads()[0];  
+            intro.remove();
+            gameLoop();
+        });
+
+    </script>
+</body>
+</html>
